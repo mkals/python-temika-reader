@@ -2,6 +2,11 @@ import os
 import struct
 import numpy as np
 import datetime
+from PIL import Image
+
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation 
+import matplotlib.cm as cm
 
 class Movie:
 	def __init__(self, filename):
@@ -16,6 +21,8 @@ class Movie:
 		self.file.seek(self.length_header)
 
 		self.max_pixel_depth = 2**16 - 1
+
+		self._iterator_count = 0
 
 		def binary_n_frames():
 			"""Finds number of frames using binary search"""
@@ -238,44 +245,12 @@ class Movie:
 		if self.pixel_mode == 'MONO8':
 			return np.reshape( struct.unpack(self.length_data*"B", self.file.read(self.length_data)), (self.size_y, self.size_x)).astype("B")
 
-	def frames(self, *args):
-		"""Returns a generator of frames. Should work like range()"""
-		iterable = False
-		if len(args) == 0:
-			start = 0
-			stop = self.n_frames
-			step = 1
+	
+	def frame_generator(self):
+		for i in range(len(self)):
+			yield self.get_frame(i)
 
-		elif len(args) == 1:
-			if hasattr(args[0], '__iter__'):
-				iterable = True
-			else:
-				start = 0
-				stop = args[0]
-				step = 1
-
-		elif len(args) == 2:
-			start = args[0]
-			stop = args[1]
-			step = 1
-
-		elif len(args) == 3:
-			start = args[0]
-			stop = args[1]
-			step = args[2]
-
-		elif len(args) > 3:
-			raise TypeError
-
-		if iterable:
-			for i in args[0]:
-				yield self.get_frame(i)
-
-		else:
-			for i in range(start, stop, step):
-				yield self.get_frame(i)
-
-	def destroy(self):
+	def __del__(self):
 		self.file.close()
 		self.file = None
 
@@ -301,3 +276,57 @@ class Movie:
 			string = "Time = {:02d}:{:02d}:{:05.3f}".format(hours, minutes, seconds)
 			
 		return string
+
+	# enables access to frames using square brackets
+	def __getitem__(self, key):
+		if isinstance(key, slice):
+			#Get the start, stop, and step from the slice
+			return [self.get_frame(ii) for ii in range(*key.indices(len(self)))]
+		elif isinstance(key, int):
+			return self.get_frame(key)
+		else:
+			raise TypeError
+
+	# returns number of frames in movie from len()
+	def __len__(self):
+		return self.n_frames
+
+	# enables itterator behaviour
+	def __next__(self):
+		ret = self[self._iterator_count]
+		self._iterator_count += 1
+		return ret
+
+	# saves the frame at index to an image file at filename
+	def to_image(self, filename, index):
+		# save image at index to filename
+		im = Image.fromarray(self[index])
+		im.save(filename)
+
+	# saves all frames to directory
+	def to_images(self, directory):
+		# create directory if it does not already exist
+		if not os.path.exists(directory):
+			os.makedirs(directory)
+		
+		# loop through images and create all images
+		for i, f in enumerate(self):
+			im = Image.fromarray(f)
+			im.save(f'{directory}/image{i}.jpeg')
+
+	# saves all frames to movie format
+	def to_movie(self, filename, fps=30):
+		Movie.save_to_movie(self, filename, fps)
+	
+	# can be used to save a subset of images to a movie file by passing in frames as movie
+	# example: tmk.Movie.save_to_movie(m[::10], 'filename.mp4', fps=60)
+	@staticmethod
+	def save_to_movie(movie, filename, fps):
+
+		fig = plt.figure()
+		frames = [[plt.imshow(image, cmap=cm.Greys_r, animated=True)] for image in movie[:-2]]
+
+		writervideo = animation.FFMpegWriter(fps=fps)
+		ani = animation.ArtistAnimation(fig, frames, interval=50, blit=True, repeat_delay=1000)
+
+		ani.save(filename, writer=writervideo)
